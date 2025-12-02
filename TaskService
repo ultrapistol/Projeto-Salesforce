@@ -1,0 +1,27 @@
+public with sharing class TaskService {
+    public static void createWelcomeTasks(List<Opportunity> opps){
+        List<Task> tasksToInsert = new List <Task>();
+        
+        for(Opportunity opp : opps){
+            if(opp.AccountId == null){
+                System.debug('Oportunidade sem conta '+ opp.ID);
+                continue;
+            }
+            Task t = new Task();
+            t.Subject = 'Dar boas vindas ao cliente';
+            t.Status = 'New';
+            t.Priority = 'Normal';
+            t.WhatId = opp.Id;
+            t.OwnerId = opp.OwnerId;
+            
+            tasksToInsert.add(t);
+        }
+        if(!tasksToInsert.isEmpty()){
+            
+            insert tasksToInsert;
+            System.debug('Tasks inseridas: '+ tasksToInsert.size());
+        }
+        
+    }
+    
+}
