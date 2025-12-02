@@ -1,0 +1,42 @@
+@isTest
+public class OpportunityTriggerTest {
+    @isTest static void test_opportunityTrigger_AfterUpdate(){
+        Account acc = new Account (Name ='Trigger Test Account');
+        insert acc;
+        
+        Opportunity opp = New Opportunity(
+        Name = 'Opportunity Trigger Test',
+        AccountId = acc.Id,
+        StageName = 'Prospecting',
+        CloseDate = Date.today().addDays(5),
+        Amount = 1000
+        );
+        insert opp;
+        
+        opp.StageName ='Closed Won';
+        update opp;
+        
+        List<Contract> contracts = [
+          SELECT Id, AccountId, StartDate, Status
+          FROM Contract
+          WHERE AccountId = :acc.Id
+        ];
+        System.assertEquals(1, contracts.size(), 'Um contrato deve ter sido criado');
+        
+        List<Task> tasks = [
+          SELECT Id, WhatId, Subject, OwnerId
+          FROM Task
+          WHERE WhatId = :opp.Id
+        ];
+        System.assertEquals(1, tasks.size(), 'uma task deve ter sido criada');
+        
+        List<Gamification__c> gamification = [
+          SELECT Id, Opportunity__c, Points__c
+          FROM Gamification__c 
+          Where Opportunity__c = :opp.Id
+        ];
+        
+        System.assertEquals(1, gamification.size(), 'Registo de Gamificação criado');
+        System.assertEquals(20, gamification[0].Points__c, 'A pontuação deve ser 20');
+    }
+}
