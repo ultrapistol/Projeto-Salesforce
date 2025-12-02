@@ -1,0 +1,33 @@
+@isTest
+public class TaskServiceTest {
+    @isTest static void test_TaskCreated(){
+        Account acc = new Account (Name = 'Task Test');
+        insert acc;
+        
+        Opportunity opp = new Opportunity(
+        	Name = 'Opportunity Create Task Test',
+            AccountId = acc.Id,
+            StageName = 'Closed Won',
+            CloseDate= Date.today(),
+            Amount = 50,
+            OwnerId = UserInfo.getUserId()
+            
+        );
+        insert opp;
+        
+        Test.startTest();
+            TaskService.createWelcomeTasks(new List<Opportunity>{ opp });
+        Test.stopTest();
+        
+        List<Task> createdTasks = [
+            SELECT Id, WhatId, Subject, Status
+            FROM Task
+            WHERE WhatId =:opp.Id
+        ];
+        
+        System.assertEquals(1, createdTasks.size(), '1 task deve ter sido criada');
+        System.assertEquals(opp.Id, createdTasks[0].WhatId,'Task deve estarrelacionada com a opp');
+        System.assertEquals('New', createdTasks[0].Status);
+    }
+
+}
