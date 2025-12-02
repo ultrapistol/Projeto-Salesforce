@@ -1,0 +1,170 @@
+@isTest
+public class GamificationServiceTest {
+	//teste para verificar se a primeira venda do mês dobrará os pontos
+    @isTest static void test_FirstSaleOfMonth_DoublesPoints(){
+        Account acc = new Account(Name = 'ACCT - Test');
+        insert acc;
+        
+        Opportunity opp = new Opportunity(
+        	Name = 'Opp - First Sale Test',
+            AccountId = acc.Id,
+            StageName = 'Closed Won',
+            CloseDate = Date.today(),
+            Amount = 1000,
+            OwnerId = UserInfo.getUserId()
+        );
+        insert opp;
+        
+        Test.startTest();
+        	GamificationService.addPointsForClosedWon(new list<Opportunity>{ opp });
+        Test.stopTest();
+        
+        List<Gamification__c> created = [
+            SELECT Id, Opportunity__c, Points__c, First_Sale_of_Month__c
+            FROM Gamification__c
+            WHERE Opportunity__c = :opp.Id
+        ];
+        System.assertEquals(1, created.size(), 'Deve ter sido criado 1 registro de Gamification para a Opportunity');
+        
+        Decimal expectedPoints = 20;
+        System.assertEquals(expectedPoints, created[0].Points__c, 'Pontos devem ser 20 (10 base* 2)');
+        System.assertEquals(true, created[0].First_Sale_of_Month__c,'Primeira venda do mês deve ser verdade/true');
+                            
+                     
+    }
+    
+    //teste para verificar se a segunda venda do mês mão virá com bônus
+    @isTest static void test_SecondSaleOfMonth_NoBonus(){
+        //inserir uma venda
+        Account acc = new Account(Name = 'ACCT - Existing');
+        insert acc;
+        
+        Opportunity existingOpp = new Opportunity(
+            Name = 'Opp-Existing Closed Won',
+            AccountId = acc.Id,
+            StageName = 'Closed Won',
+            CloseDate = Date.today().addDays(-5),
+            Amount= 500,
+            OwnerId = UserInfo.getUserId()
+         
+        );
+        insert existingOpp;
+        
+        Opportunity newOpp = new Opportunity(
+            Name = 'Opp-New Closed Won',
+            AccountId = acc.Id,
+            StageName = 'Closed Won',
+            CloseDate = Date.today(),
+            Amount= 1000,
+            OwnerId = UserInfo.getUserId()
+         
+        );
+        insert newOpp;
+        
+        Test.startTest();
+        	GamificationService.addPointsForClosedWon(new List<Opportunity>{newOpp});
+        Test.stopTest();
+    
+    	List<Gamification__c> created = [
+            SELECT Id, Opportunity__c, Points__c, First_Sale_of_Month__c
+            FROM Gamification__c
+            WHERE Opportunity__c = :newOpp.Id
+        ];
+        
+        System.assertEquals(1, created.size(), 'Deve criar Gamification para a nova venda.');
+        System.assertEquals(10, created[0].points__c, 'nova venda não deve ter pontos dobrados.');
+        System.assertEquals(false, created[0].First_Sale_of_Month__c,' Não deve marcar como primeira venda do mês.');
+    }
+    
+    //Teste para não duplicar pontos
+    @isTest static void test_PreventDuplicateGamification(){
+        Account acc = new Account(Name = 'ACCT - Duplication');
+        insert acc;
+        
+        Opportunity opp = new Opportunity(
+        	Name = 'Opp - Duplicate Test',
+        	AccountId = acc.Id,
+            StageName = 'Closed Won',
+            CloseDate = Date.today(),
+            Amount = 1000,
+            OwnerId = UserInfo.getUserId()
+            );
+        insert opp;
+        
+        GamificationService.AddPointsForClosedWon(new List<Opportunity>{ opp });
+        
+        Test.startTest();
+        	GamificationService.addPointsForClosedWon(New List<Opportunity>{opp});
+        Test.stopTest();
+        
+        Integer countGam = [SELECT COUNT() FROM Gamification__c WHERE Opportunity__c = :opp.Id];
+        System.assertEquals(1, countGam, 'Não cria duplicata de Gamification para mesma oportunidade');
+        
+    }
+    
+    //Teste para Oportunidades com valor nulo
+    @isTest static void test_OpportunityWithNoAmount(){
+        Account acc = new Account (Name= ' ACCT - No Amount');
+        insert acc;
+        
+        Opportunity opp = new Opportunity(
+        Name = 'Opp - No Amount',
+        AccountId = acc.Id,
+        StageName = 'Closed Won',
+        CloseDate = Date.today(),
+        Amount = null,
+        OwnerId = UserInfo.getUserId()
+        );
+        insert opp;
+        
+        Test.startTest();
+        	GamificationService.addPointsForClosedWon(new List<Opportunity> {opp});
+        Test.stopTest();
+        
+        Integer countGam = [SELECT COUNT() FROM Gamification__c WHERE Opportunity__c =:opp.Id];
+        System.assertEquals(0, countGam, 'Oportunidade sem amount deve ser ignorada.');
+    }
+    //Teste para verificar se o método compare está funcionando
+    @isTest static void test_OpportunityOrdenation(){
+        GamificationService.OpportunityDateComparator comp = new GamificationService.OpportunityDateComparator();
+        
+        //ambos nulos
+        System.assertEquals(0, comp.compare(null, null));
+        
+        //a null 
+        Opportunity b = new Opportunity(Id = '006000000000001', CloseDate = Date.today());
+        System.assertEquals(1, comp.compare(null, b));
+        
+        //b null 
+        Opportunity a = new Opportunity(Id = '006000000000002', CloseDate = Date.today());
+        System.assertEquals(-1, comp.compare(a, null));
+        
+         //duas opp com data null devem usar o id como desempate
+         Opportunity a1 = new Opportunity(Id = '006000000000003');
+         Opportunity b1 = new Opportunity(Id = '006000000000004');
+         System.assertEquals(-1, comp.compare(a1, b1));
+         System.assertEquals(1, comp.compare(b1, a1));
+        
+        //Opp 'a' sem data, b deve vir primeiro
+        Opportunity a2 = new Opportunity(Id = '006000000000005');
+        Opportunity b2 = new Opportunity(Id = '006000000000006', CloseDate = Date.today());
+        System.assertEquals(1, comp.compare(a2,b2));
+        
+        //Opp b sem data, a deve vir pprimeiro
+        Opportunity a3 = new Opportunity(Id = '006000000000007', CloseDate = Date.today());
+        Opportunity b3 = new Opportunity(Id = '006000000000008');
+        System.assertEquals(-1, comp.compare(a3,b3));
+        
+       //Duas opps com a mesma data devem usar o id como desempate
+       Opportunity a4 = new Opportunity(Id = '006000000000009', CloseDate = Date.today());
+       Opportunity b4 = new Opportunity(Id = '006000000000010', CloseDate = Date.today());
+       System.assertEquals(-1, comp.compare(a4, b4));
+       System.assertEquals(1, comp.compare(b4,a4));
+        
+       //Opps com datas diferentes devem ser comparadas e organizadas
+       Opportunity a5 = new Opportunity(Id = '006000000000011', CloseDate = Date.today().addDays(-2));
+       Opportunity b5 = new Opportunity(Id = '006000000000012', CloseDate = Date.today().addDays(+2));
+       System.assertEquals(-1, comp.compare(a5, b5));
+       System.assertEquals(1, comp.compare(b5,a5));
+    }
+}
