@@ -1,0 +1,31 @@
+public with sharing class ContractService {
+    public static void createContracts(List<Opportunity> opps){
+        List<Contract> contractsToInsert = new List <Contract>();
+        
+        for (Opportunity opp: opps){
+            if(opp.AccountId == null){
+                System.debug('Oportunidade sem Conta: ' + opp.Id);
+                continue;
+            }
+            
+            Contract c = new Contract();
+            c.AccountId = opp.AccountId;
+            c.Opportunity__c = opp.Id;
+            c.Status = 'Draft'; // ESSE ME PEGOU, vou pesquisar como mudar depois
+            c.StartDate = Date.today();
+            c.ContractTerm = 12;
+            
+            contractsToInsert.add(c);
+        }
+
+        if (!contractsToInsert.isEmpty()){
+            try {
+                insert contractsToInsert;
+            } catch (Exception e) {
+                System.debug(' ERRO AO INSERIR CONTRATO: ' + e.getMessage());
+                System.debug(' CAMPOS DO CONTRATO: ' + JSON.serialize(contractsToInsert));
+                throw e;
+            }
+        }
+    }
+}
