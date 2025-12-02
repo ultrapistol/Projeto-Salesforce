@@ -1,0 +1,163 @@
+public with sharing class GamificationService {
+    public static void addPointsForClosedWon(List<Opportunity> opps){
+        if (opps == null || opps.isEmpty()) return;
+        
+        // Só processa Closed Won que contenha Amount e Owner
+        List<Opportunity> candidates = new List<Opportunity>();
+        Set<Id> oppIds = new Set<Id>();
+        Set<Id> ownerIds = new Set<Id>();
+        
+        for (Opportunity o : opps) {
+            if (o == null) continue;
+            if (o.StageName == 'Closed Won' && o.OwnerId != null && o.Amount != null) {
+                candidates.add(o);
+                oppIds.add(o.Id);
+                ownerIds.add(o.OwnerId);
+            }
+        }
+        if (candidates.isEmpty()) return;
+        
+        // Filtragem de gamification__c já associados a opps (evitar duplicações)
+        Map<Id, Gamification__c> existingByOpp = new Map<Id, Gamification__c>();
+        for (Gamification__c g : [
+            SELECT Id, Opportunity__c, OwnerId, Points__c
+            FROM Gamification__c
+            WHERE Opportunity__c IN :oppIds
+        ]) {
+            existingByOpp.put(g.Opportunity__c, g);
+        }
+        
+        // Agrupar opps por owner + mês/ano
+        Map<String, List<Opportunity>> ownerMonthToOpps = new Map<String, List<Opportunity>>();
+        Set<Integer> months = new Set<Integer>();
+        Set<Integer> years = new Set<Integer>();
+        
+        for (Opportunity o : candidates) {
+            Date cd = o.CloseDate != null ? o.CloseDate : Date.Today();
+            Integer yyyy = cd.year();
+            Integer mm = cd.month();
+            months.add(mm);
+            years.add(yyyy);
+            
+            String key = o.OwnerId + '|' + String.valueOf(yyyy) + '-' + String.valueOf(mm);
+            if (!ownerMonthToOpps.containsKey(key)) {
+                ownerMonthToOpps.put(key, new List<Opportunity>());
+            }
+            ownerMonthToOpps.get(key).add(o);
+        }
+        
+        // Verificar se já há algum Closed-Won do mesmo owner e mês (no banco)
+        Map<String, Boolean> ownerMonthHasPrevious = new Map<String, Boolean>();
+        if (!ownerIds.isEmpty()) {
+            List<Opportunity> dbOpps = [
+                SELECT Id, OwnerId, CloseDate
+                FROM Opportunity
+                WHERE StageName = 'Closed Won'
+                AND OwnerId IN :ownerIds
+                AND Id NOT IN :oppIds
+                AND CALENDAR_YEAR(CloseDate) IN :years
+                AND CALENDAR_MONTH(CloseDate) IN :months
+            ];
+            for (Opportunity db : dbOpps) {
+                if (db.CloseDate == null) continue;
+                String k = db.OwnerId + '|' + String.valueOf(db.CloseDate.year()) + '-' + String.valueOf(db.CloseDate.month());
+                ownerMonthHasPrevious.put(k, true);
+            }
+        }
+        
+        // Decidir qual é a primeira opp do mês
+        Map<Id, Id> ownerToChosenFirstOpp = new Map<Id, Id>();
+        for (String key : ownerMonthToOpps.keySet()) {
+            String[] parts = key.split('\\|');
+            Id ownerId = (Id)parts[0];
+            List<Opportunity> firstOfTheMonth = ownerMonthToOpps.get(key);
+            if (firstOfTheMonth == null || firstOfTheMonth.isEmpty()) continue;
+            
+            // Ordena pela data de fechamento (CloseDate) com desempate por Id
+            firstOfTheMonth.sort(new OpportunityDateComparator());
+            
+            if (ownerMonthHasPrevious.containsKey(key)) continue;
+            
+            Opportunity chosen = firstOfTheMonth[0];
+            ownerToChosenFirstOpp.put(ownerId, chosen.Id);
+        }
+        
+        // Adição de pontos e cálculo de bônus
+        Map<Id, Integer> ownerToPoints = new Map<Id, Integer>();
+        List<Gamification__c> toInsert = new List<Gamification__c>();
+        
+        
+        // Buscar pontos existentes
+        Map<Id, Decimal> existingPointsByOwner = new Map<Id, Decimal>();
+        for (AggregateResult ar : [
+            SELECT OwnerId, SUM(Points__c) total
+            FROM Gamification__c
+            WHERE OwnerId IN :ownerIds
+            GROUP BY OwnerId
+        ]) {
+            existingPointsByOwner.put((Id)ar.get('OwnerId'), (Decimal)ar.get('total'));
+        }
+        
+        for (Opportunity o : candidates) {
+            if (existingByOpp.containsKey(o.Id)) {
+                System.debug('GamificationService: Opportunity já processada ' + o.Id);
+                continue;
+            }
+            
+            Decimal amount = (o.Amount == null) ? 0 : o.Amount;
+            Integer basePoints = (Integer)(amount / 100);
+            if (basePoints <= 0) continue;
+            
+            Integer finalPoints = basePoints;
+            Boolean isFirst = false;
+            if (ownerToChosenFirstOpp.containsKey(o.OwnerId) && ownerToChosenFirstOpp.get(o.OwnerId) == o.Id) {
+                isFirst = true;
+                finalPoints *= 2;
+            }
+            
+            Integer accumulated = ownerToPoints.containsKey(o.OwnerId) ? ownerToPoints.get(o.OwnerId) : 0;
+            ownerToPoints.put(o.OwnerId, accumulated + finalPoints);
+            
+          
+            
+            // Criar registro Gamification
+            Gamification__c g = new Gamification__c();
+            g.OwnerId = o.OwnerId;
+            g.Opportunity__c = o.Id;
+            g.Points__c = finalPoints;
+            g.Sale_Amount__c = amount;
+            g.First_Sale_of_Month__c = isFirst;
+            g.Sale_Date__c = (o.CloseDate == null) ? Date.today() : o.CloseDate;
+            
+            Decimal previous = existingPointsByOwner.containsKey(o.OwnerId) ? existingPointsByOwner.get(o.OwnerId) : 0;
+            g.Total_Points__c = previous + ownerToPoints.get(o.OwnerId);
+            
+            toInsert.add(g);
+        }
+        
+        if (!toInsert.isEmpty()) {
+            insert toInsert;
+        }
+    }
+    
+    // Classe interna usada no sort() para ordenar por CloseDate e Id
+    public class OpportunityDateComparator implements Comparator<Opportunity> {
+        public Integer compare(Opportunity a, Opportunity b) {
+            if (a == null && b == null) return 0;
+            if (a == null) return 1;
+            if (b == null) return -1;      
+            Date ad = a.CloseDate;
+            Date bd = b.CloseDate;
+            //se as duas datas forem null, desempata por id
+            if (ad == null && bd == null) {
+                return String.valueOf(a.Id).compareTo(String.valueOf(b.Id));
+            }
+            //se um deles tiver data deve vir depois
+            if (ad == null) return 1;
+            if (bd == null) return -1;
+            if (ad < bd) return -1;
+            if (ad > bd) return 1;
+            return String.valueOf(a.Id).compareTo(String.valueOf(b.Id));
+        }
+    }
+}
