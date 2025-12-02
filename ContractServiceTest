@@ -1,0 +1,28 @@
+@isTest
+public class ContractServiceTest {
+    @isTest static void test_ContractCreated(){
+        Account acc = new Account(Name = 'Contract Test');
+        insert acc;
+        
+        Opportunity opp = new Opportunity(
+            Name = 'Opportunity Create Contract Test',
+            AccountId = acc.Id,
+            StageName = 'Closed Won',
+            CloseDate = Date.today(),
+            Amount = 50
+        );
+        insert opp;
+        
+        Test.startTest();
+        	ContractService.createContracts(new List<Opportunity>{opp});
+        Test.StopTest();
+        
+        List<Contract> contractCreated = [
+            SELECT Id, Opportunity__c 
+            FROM Contract 
+            WHERE Opportunity__c = :opp.Id
+        ];
+        
+        System.assertEquals(1, contractCreated.size(), '1 contrato deve ter sido criado');
+    }
+}
